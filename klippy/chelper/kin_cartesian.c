@@ -32,6 +32,34 @@ cart_stepper_z_calc_position(struct stepper_kinematics *sk, struct move *m
     return move_get_coord(m, move_time).z;
 }
 
+static double
+cart_stepper_a_calc_position(struct stepper_kinematics *sk, struct move *m
+                             , double move_time)
+{
+    return move_get_coord(m, move_time).a;
+}
+
+static double
+cart_stepper_b_calc_position(struct stepper_kinematics *sk, struct move *m
+                             , double move_time)
+{
+    double angle = move_get_coord(m, move_time).b;
+    if (angle - sk->commanded_pos > 180.)
+        angle -= 360.;
+    else if (angle - sk->commanded_pos < -180.)
+        angle += 360.;
+    return angle;
+}
+
+static void
+cart_stepper_b_post_fixup(struct stepper_kinematics *sk)
+{
+    if (sk->commanded_pos < -180.)
+        sk->commanded_pos += 360.;
+    else if (sk->commanded_pos > 180.)
+        sk->commanded_pos -= 360.;
+}
+
 struct stepper_kinematics * __visible
 cartesian_stepper_alloc(char axis)
 {
@@ -46,6 +74,13 @@ cartesian_stepper_alloc(char axis)
     } else if (axis == 'z') {
         sk->calc_position_cb = cart_stepper_z_calc_position;
         sk->active_flags = AF_Z;
+    } else if (axis == 'a') {
+        sk->calc_position_cb = cart_stepper_a_calc_position;
+        sk->active_flags = AF_A;
+    } else if (axis == 'b') {
+        sk->calc_position_cb = cart_stepper_b_calc_position;
+        sk->post_cb = cart_stepper_b_post_fixup;
+        sk->active_flags = AF_B;
     }
     return sk;
 }

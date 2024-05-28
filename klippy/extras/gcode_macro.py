@@ -23,7 +23,7 @@ class GetStatusWrapper:
             return self.cache[sval]
         po = self.printer.lookup_object(sval, None)
         if po is None or not hasattr(po, 'get_status'):
-            raise KeyError(val)
+            raise KeyError(val) #@IgnoreException
         if self.eventtime is None:
             self.eventtime = self.printer.get_reactor().monotonic()
         self.cache[sval] = res = copy.deepcopy(po.get_status(self.eventtime))

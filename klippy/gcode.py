@@ -8,7 +8,7 @@ import os, re, logging, collections, shlex
 class CommandError(Exception):
     pass
 
-Coord = collections.namedtuple('Coord', ('x', 'y', 'z', 'e'))
+Coord = collections.namedtuple('Coord', ('x', 'y', 'z', 'a', 'b', 'e'))
 
 class GCodeCommand:
     error = CommandError
@@ -116,7 +116,7 @@ class GCodeDispatch:
         # A "traditional" g-code command is a letter and followed by a number
         try:
             cmd = cmd.upper().split()[0]
-            val = float(cmd[1:])
+            val = float(cmd[1:]) #@IgnoreException
             return cmd[0].isupper() and cmd[1].isdigit()
         except:
             return False

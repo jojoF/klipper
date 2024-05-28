@@ -240,7 +240,7 @@ class MessageParser:
         self.raw_identify_data = ""
         self._init_messages(DefaultMessages)
     def _error(self, msg, *params):
-        raise error(self.warn_prefix + (msg % params))
+        raise error(self.warn_prefix + (msg % params)) #@IgnoreException
     def check_packet(self, s):
         if len(s) < MESSAGE_MIN:
             return 0

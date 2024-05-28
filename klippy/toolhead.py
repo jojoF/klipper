@@ -17,53 +17,99 @@ class Move:
         self.start_pos = tuple(start_pos)
         self.end_pos = tuple(end_pos)
         self.accel = toolhead.max_accel
+        self.max_angular_velocity = toolhead.max_angular_velocity
+        self.max_angular_accel = toolhead.max_angular_accel
         self.junction_deviation = toolhead.junction_deviation
         self.timing_callbacks = []
         velocity = min(speed, toolhead.max_velocity)
         self.is_kinematic_move = True
-        self.axes_d = axes_d = [end_pos[i] - start_pos[i] for i in (0, 1, 2, 3)]
+        self.axes_d = axes_d = [end_pos[i] - start_pos[i] for i in (0, 1, 2, 3, 4, 5)]
+        if self.axes_d[4] > 180.0:
+            self.axes_d[4] = self.axes_d[4] - 360.0
+            self.start_pos = (self.start_pos[0], self.start_pos[1], self.start_pos[2], self.start_pos[3], self.start_pos[4] + 360.0, self.start_pos[5])
+        if self.axes_d[4] < -180.0:
+            self.axes_d[4] = 360.0 + self.axes_d[4]
+            self.start_pos = (self.start_pos[0], self.start_pos[1], self.start_pos[2], self.start_pos[3], self.start_pos[4] - 360.0, self.start_pos[5])
         self.move_d = move_d = math.sqrt(sum([d*d for d in axes_d[:3]]))
-        if move_d < .000000001:
+        self.move_rot_d = move_rot_d = max(abs(axes_d[3]), abs(axes_d[4])) #sum([abs(d) for d in axes_d[3:5]])
+        linear_time = move_d / speed
+        min_rot_time = move_rot_d / self.max_angular_velocity
+        if min_rot_time > linear_time:
+            velocity *= linear_time / min_rot_time
+        if move_d < .000000001 and move_rot_d < .000000001:
             # Extrude only move
-            self.end_pos = (start_pos[0], start_pos[1], start_pos[2],
-                            end_pos[3])
-            axes_d[0] = axes_d[1] = axes_d[2] = 0.
-            self.move_d = move_d = abs(axes_d[3])
+            self.end_pos = (start_pos[0], start_pos[1], start_pos[2], start_pos[3], start_pos[4],
+                            end_pos[5])
+            axes_d[0] = axes_d[1] = axes_d[2] = axes_d[3] = axes_d[4] = 0.
+            self.move_d = move_d = abs(axes_d[5])
             inv_move_d = 0.
             if move_d:
                 inv_move_d = 1. / move_d
             self.accel = 99999999.9
             velocity = speed
             self.is_kinematic_move = False
+            self.min_move_t = move_d / velocity
+            self.delta_v2 = 2.0 * move_d * self.accel
+            self.smooth_delta_v2 = 2.0 * move_d * toolhead.max_accel_to_decel
         else:
-            inv_move_d = 1. / move_d
+            if move_d < .000000001:
+                inv_move_d = 1. / move_rot_d
+                velocity = self.max_angular_velocity
+                self.min_move_t = move_rot_d / velocity
+                self.delta_v2 = 2.0 * move_rot_d * self.max_angular_accel
+                self.smooth_delta_v2 = 2.0 * move_rot_d * 0.5 * toolhead.max_angular_accel
+                self.accel = self.max_angular_accel
+            else:
+                inv_move_d = 1. / move_d
+                self.min_move_t = move_d / velocity
+                self.delta_v2 = 2.0 * move_d * self.accel
+                self.smooth_delta_v2 = 2.0 * move_d * toolhead.max_accel_to_decel
         self.axes_r = [d * inv_move_d for d in axes_d]
-        self.min_move_t = move_d / velocity
+        #self.min_move_t = move_d / velocity
         # Junction speeds are tracked in velocity squared.  The
         # delta_v2 is the maximum amount of this squared-velocity that
         # can change in this move.
         self.max_start_v2 = 0.
         self.max_cruise_v2 = velocity**2
-        self.delta_v2 = 2.0 * move_d * self.accel
+        #self.delta_v2 = 2.0 * move_d * self.accel
         self.max_smoothed_v2 = 0.
-        self.smooth_delta_v2 = 2.0 * move_d * toolhead.max_accel_to_decel
-    def limit_speed(self, speed, accel):
+        #self.smooth_delta_v2 = 2.0 * move_d * toolhead.max_accel_to_decel
+    def limit_speed(self, speed, accel): # called by extruder.check_move() on extrude-only moves or corexy.check_move() to limit z speed
         speed2 = speed**2
         if speed2 < self.max_cruise_v2:
             self.max_cruise_v2 = speed2
-            self.min_move_t = self.move_d / speed
+            if self.move_d < .000000001:
+                self.min_move_t = self.move_rot_d / speed
+            else:
+                self.min_move_t = self.move_d / speed
         self.accel = min(self.accel, accel)
-        self.delta_v2 = 2.0 * self.move_d * self.accel
+        if self.move_d < .000000001:
+            self.delta_v2 = 2.0 * self.move_rot_d * self.accel
+        else:
+            self.delta_v2 = 2.0 * self.move_d * self.accel
         self.smooth_delta_v2 = min(self.smooth_delta_v2, self.delta_v2)
     def move_error(self, msg="Move out of range"):
         ep = self.end_pos
-        m = "%s: %.3f %.3f %.3f [%.3f]" % (msg, ep[0], ep[1], ep[2], ep[3])
+        m = "%s: %.3f %.3f %.3f %.3f %.3f [%.3f]" % (msg, ep[0], ep[1], ep[2], ep[3], ep[4], ep[5])
         return self.toolhead.printer.command_error(m)
     def calc_junction(self, prev_move):
         if not self.is_kinematic_move or not prev_move.is_kinematic_move:
             return
         # Allow extruder to calculate its maximum junction
         extruder_v2 = self.toolhead.extruder.calc_junction(prev_move, self)
+        if self.move_d < .000000001:
+            if prev_move.move_d < .000000001:
+                self.max_start_v2 = min(
+                    extruder_v2,
+                    prev_move.max_start_v2 + prev_move.delta_v2,
+                    self.max_cruise_v2,
+                    prev_move.max_cruise_v2)
+                self.max_smoothed_v2 = min(
+                    self.max_start_v2,
+                    prev_move.max_smoothed_v2 + prev_move.smooth_delta_v2)
+                return
+            else:
+                return
         # Find max velocity using "approximated centripetal velocity"
         axes_r = self.axes_r
         prev_axes_r = prev_move.axes_r
@@ -92,10 +138,16 @@ class Move:
             , prev_move.max_smoothed_v2 + prev_move.smooth_delta_v2)
     def set_junction(self, start_v2, cruise_v2, end_v2):
         # Determine accel, cruise, and decel portions of the move distance
-        half_inv_accel = .5 / self.accel
+        if self.move_d < .000000001:
+            half_inv_accel = .5 / self.max_angular_accel
+        else:
+            half_inv_accel = .5 / self.accel
         accel_d = (cruise_v2 - start_v2) * half_inv_accel
         decel_d = (cruise_v2 - end_v2) * half_inv_accel
-        cruise_d = self.move_d - accel_d - decel_d
+        if self.move_d < .000000001:
+            cruise_d = self.move_rot_d - accel_d - decel_d
+        else:
+            cruise_d = self.move_d - accel_d - decel_d
         # Determine move velocities
         self.start_v = start_v = math.sqrt(start_v2)
         self.cruise_v = cruise_v = math.sqrt(cruise_v2)
@@ -211,7 +263,7 @@ class ToolHead:
         self.mcu = self.all_mcus[0]
         self.move_queue = MoveQueue(self)
         self.move_queue.set_flush_time(BUFFER_TIME_HIGH)
-        self.commanded_pos = [0., 0., 0., 0.]
+        self.commanded_pos = [0., 0., 0., 0., 0., 0.]
         # Velocity and acceleration control
         self.max_velocity = config.getfloat('max_velocity', above=0.)
         self.max_accel = config.getfloat('max_accel', above=0.)
@@ -220,6 +272,10 @@ class ToolHead:
         self.max_accel_to_decel = self.requested_accel_to_decel
         self.square_corner_velocity = config.getfloat(
             'square_corner_velocity', 5., minval=0.)
+        self.max_angular_velocity = config.getfloat(
+            'max_angular_velocity', above=0.)
+        self.max_angular_accel = config.getfloat(
+            'max_angular_accel', above=0.)
         self.junction_deviation = 0.
         self._calc_junction_deviation()
         # Input stall detection
@@ -329,10 +385,10 @@ class ToolHead:
                 self.trapq_append(
                     self.trapq, next_move_time,
                     move.accel_t, move.cruise_t, move.decel_t,
-                    move.start_pos[0], move.start_pos[1], move.start_pos[2],
-                    move.axes_r[0], move.axes_r[1], move.axes_r[2],
+                    move.start_pos[0], move.start_pos[1], move.start_pos[2], move.start_pos[3], move.start_pos[4],
+                    move.axes_r[0], move.axes_r[1], move.axes_r[2], move.axes_r[3], move.axes_r[4],
                     move.start_v, move.cruise_v, move.accel)
-            if move.axes_d[3]:
+            if move.axes_d[5]:
                 self.extruder.move(next_move_time, move)
             next_move_time = (next_move_time + move.accel_t
                               + move.cruise_t + move.decel_t)
@@ -439,17 +495,17 @@ class ToolHead:
         self.flush_step_generation()
         ffi_main, ffi_lib = chelper.get_ffi()
         ffi_lib.trapq_set_position(self.trapq, self.print_time,
-                                   newpos[0], newpos[1], newpos[2])
+                                   newpos[0], newpos[1], newpos[2], newpos[3], newpos[4])
         self.commanded_pos[:] = newpos
         self.kin.set_position(newpos, homing_axes)
         self.printer.send_event("toolhead:set_position")
     def move(self, newpos, speed):
         move = Move(self, self.commanded_pos, newpos, speed)
-        if not move.move_d:
+        if not move.move_d and not move.move_rot_d:
             return
         if move.is_kinematic_move:
             self.kin.check_move(move)
-        if move.axes_d[3]:
+        if move.axes_d[5]:
             self.extruder.check_move(move)
         self.commanded_pos[:] = move.end_pos
         self.move_queue.add_move(move)
@@ -476,7 +532,7 @@ class ToolHead:
             eventtime = self.reactor.pause(eventtime + 0.100)
     def set_extruder(self, extruder, extrude_pos):
         self.extruder = extruder
-        self.commanded_pos[3] = extrude_pos
+        self.commanded_pos[5] = extrude_pos
     def get_extruder(self):
         return self.extruder
     # Homing "drip move" handling
@@ -484,7 +540,7 @@ class ToolHead:
         flush_delay = DRIP_TIME + STEPCOMPRESS_FLUSH_TIME + self.kin_flush_delay
         while self.print_time < next_print_time:
             if self.drip_completion.test():
-                raise DripModeEndSignal()
+                raise DripModeEndSignal() #@IgnoreException
             curtime = self.reactor.monotonic()
             est_print_time = self.mcu.estimated_print_time(curtime)
             wait_time = self.print_time - est_print_time - flush_delay

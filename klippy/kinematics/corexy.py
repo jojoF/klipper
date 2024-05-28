@@ -10,7 +10,7 @@ class CoreXYKinematics:
     def __init__(self, toolhead, config):
         # Setup axis rails
         self.rails = [stepper.LookupMultiRail(config.getsection('stepper_' + n))
-                      for n in 'xyz']
+                      for n in 'xyzab']
         for s in self.rails[1].get_steppers():
             self.rails[0].get_endstops()[0][0].add_stepper(s)
         for s in self.rails[0].get_steppers():
@@ -18,6 +18,8 @@ class CoreXYKinematics:
         self.rails[0].setup_itersolve('corexy_stepper_alloc', b'+')
         self.rails[1].setup_itersolve('corexy_stepper_alloc', b'-')
         self.rails[2].setup_itersolve('cartesian_stepper_alloc', b'z')
+        self.rails[3].setup_itersolve('cartesian_stepper_alloc', b'a')
+        self.rails[4].setup_itersolve('cartesian_stepper_alloc', b'b')
         for s in self.get_steppers():
             s.set_trapq(toolhead.get_trapq())
             toolhead.register_step_generator(s.generate_steps)

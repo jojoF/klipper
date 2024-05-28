@@ -189,7 +189,7 @@ class SelectReactor:
             pass
         while 1:
             try:
-                func, args = self._async_queue.get_nowait()
+                func, args = self._async_queue.get_nowait() #@IgnoreException
             except queue.Empty:
                 break
             func(*args)
